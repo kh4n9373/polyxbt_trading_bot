@@ -1,0 +1,5 @@
+pymongo
+motor
+dotenv
+schedule
+python-crontab

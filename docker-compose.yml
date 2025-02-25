@@ -1,0 +1,8 @@
+version: '3.10'
+services:
+  cronjob:
+    build: .
+    env_file: .env
+    tty: true
+    container_name: cronjob_service
+    restart: always
