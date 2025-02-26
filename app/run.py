@@ -197,7 +197,7 @@ class TradingBot:
             predictions = await self.mongo_client.find(
                 settings.poly_predictions_collection_name,
                 {
-                    "detailed_prediction": {
+                    "open_position": {
                         "$exists": True
                     }
                 }
