@@ -32,8 +32,8 @@ class Decision(str, Enum):
 
 @dataclass
 class TradingConfig:
-    TAKE_PROFIT_THRESHOLD: float = 0.1
-    STOP_LOSS_THRESHOLD: float = -0.2
+    TAKE_PROFIT_THRESHOLD: float = 0.5
+    STOP_LOSS_THRESHOLD: float = 2/5
 
 @dataclass
 class TradeData:
@@ -42,7 +42,7 @@ class TradeData:
     option_id: str
     entry_odds: List[float]
     prediction_idx: int
-    max_profit: float
+    highest_profit: float
     volume: float
     created_at: int
     curr_odds: Optional[List[float]] = None
@@ -116,7 +116,7 @@ class TradingBot:
                 'created_at': trade.created_at,
                 'entry_odds': trade.entry_odds,
                 'curr_odds': trade.curr_odds,
-                'max_profit': trade.max_profit,
+                'highest_profit': trade.highest_profit,
                 'tpsl_profit': profit,
                 'tpsl_open_position': position.value,
                 'tpsl_update_at': datetime.now().timestamp(),
@@ -132,16 +132,16 @@ class TradingBot:
                                                 data=document, 
                                                 upsert=True)
 
-    async def update_max_profit(
+    async def update_highest_profit(
         self,
         prediction_id: str,
-        max_profit: float
+        highest_profit: float
     ) -> None:
         """Update max profit in database."""
         await self.mongo_client.update_one(
             "tpsl_polyxbt",
             {"prediction_id": prediction_id},
-            {'$set': {"max_profit": max_profit}}
+            {'$set': {"highest_profit": highest_profit}}
         )
 
     async def evaluate_tpsl(self, trade: TradeData) -> Tuple[Position, Optional[Decision]]:
@@ -152,18 +152,24 @@ class TradingBot:
             trade.prediction_idx
         )
         
-        new_max_profit = max(trade.max_profit, profit)
-        logger.info(f"Current profit: {profit:.2%}, Max profit: {new_max_profit:.2%}")
-        print(f"Current profit: {profit:.2%}, Max profit: {new_max_profit:.2%}")
+        new_highest_profit = max(trade.highest_profit, profit)
+        logger.info(f"Current profit: {profit:.2%}, Max profit: {new_highest_profit:.2%}")
+        print(f"Current profit: {profit:.2%}, Max profit: {new_highest_profit:.2%}")
         if trade.curr_odds[0] == 1 or trade.curr_odds[1] == 1:
             if profit > 0:
                 return Position.CLOSE, Decision.WIN
             else:
                 return Position.CLOSE, Decision.LOSS
-        if profit > 0 and new_max_profit - profit > self.config.TAKE_PROFIT_THRESHOLD:
+        
+        # max_profit: trần profit
+        max_profit = (1-trade.entry_odds[trade.prediction_idx])/trade.entry_odds[trade.prediction_idx]
+
+        if profit > min(0.2, 0.5*max_profit) and (new_highest_profit - profit)/new_highest_profit > self.config.TAKE_PROFIT_THRESHOLD:
             return Position.CLOSE, Decision.TAKE_PROFIT
-        elif profit <= 0 and profit < self.config.STOP_LOSS_THRESHOLD:
+        
+        elif profit <= 0 and abs(profit/max_profit) > self.config.STOP_LOSS_THRESHOLD:
             return Position.CLOSE, Decision.STOP_LOSS
+        
         return Position.OPEN, None
 
     async def process_trade(self, trade: TradeData) -> bool:
@@ -186,8 +192,8 @@ class TradingBot:
                 logger.info("Position held")
                 print("Position held")
                 
-            await self.update_max_profit(trade.prediction_id, 
-                                       max(trade.max_profit, 
+            await self.update_highest_profit(trade.prediction_id, 
+                                       max(trade.highest_profit, 
                                            curr_profit))
             return True
             
@@ -201,10 +207,10 @@ class TradingBot:
             predictions = await self.mongo_client.find(
                 settings.poly_predictions_collection_name,
                 {
-                    # "open_position": {
-                    #     "$exists": True
-                    # }
-                    "open_position":"OPEN"
+                    "open_position": {
+                        "$exists": True
+                    }
+                    # "open_position":"CLOSE"
                 }
             )
 
@@ -225,7 +231,7 @@ class TradingBot:
                         }
                     )
                     if not tpsl_record: tpsl_record = {}
-                    max_profit = tpsl_record.get('max_profit',0)
+                    highest_profit = tpsl_record.get('highest_profit',0)
                     trade = TradeData(
                         prediction_id=prediction['prediction_id'],
                         hash_id=prediction['hash_id'],
@@ -234,7 +240,7 @@ class TradingBot:
                         prediction_idx=prediction['detailed_prediction']['prediction_idx'],
                         volume=prediction["volume"],
                         created_at=prediction["created_at"],
-                        max_profit=max_profit
+                        highest_profit=highest_profit
                     )
                     
                     await self.process_trade(trade)
