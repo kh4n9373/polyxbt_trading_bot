@@ -43,6 +43,8 @@ class TradeData:
     entry_odds: List[float]
     prediction_idx: int
     max_profit: float
+    volume: float
+    created_at: int
     curr_odds: Optional[List[float]] = None
 
 class TradingBot:
@@ -111,12 +113,14 @@ class TradingBot:
                 'hash_id': trade.hash_id,
                 'prediction_id': trade.prediction_id,
                 'option_id': trade.option_id,
+                'created_at': trade.created_at,
                 'entry_odds': trade.entry_odds,
                 'curr_odds': trade.curr_odds,
                 'max_profit': trade.max_profit,
                 'tpsl_profit': profit,
                 'tpsl_open_position': position.value,
-                'tpsl_update_at': datetime.now().timestamp()
+                'tpsl_update_at': datetime.now().timestamp(),
+                'volume':trade.volume
             }
         }
         
@@ -197,9 +201,10 @@ class TradingBot:
             predictions = await self.mongo_client.find(
                 settings.poly_predictions_collection_name,
                 {
-                    "open_position": {
-                        "$exists": True
-                    }
+                    # "open_position": {
+                    #     "$exists": True
+                    # }
+                    "open_position":"OPEN"
                 }
             )
 
@@ -227,6 +232,8 @@ class TradingBot:
                         option_id=prediction['detailed_prediction']['option_id'],
                         entry_odds=prediction['detailed_prediction']['odds'],
                         prediction_idx=prediction['detailed_prediction']['prediction_idx'],
+                        volume=prediction["volume"],
+                        created_at=prediction["created_at"],
                         max_profit=max_profit
                     )
                     
