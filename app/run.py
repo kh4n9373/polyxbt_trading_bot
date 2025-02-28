@@ -75,7 +75,7 @@ class TradingBot:
         
         if 1 in curr_odds:
             position = 'WIN' if curr_odds[prediction_idx] == 1 else 'LOSS'
-            logger.info(f'Event closed with profit {profit:.2%}, Position: {position}')
+            # logger.info(f'Event closed with profit {profit:.2%}, Position: {position}')
             print(f'Event closed with profit {profit:.2%}, Position: {position}')
             
         return profit
@@ -99,7 +99,7 @@ class TradingBot:
         )
         if not matching_opt:
             raise ValueError(f"Option not found for option_id: {option_id} for event {hash_id}")
-        trade.option = ""
+        trade.option = matching_opt['question']
         return [float(odd) for odd in json.loads(matching_opt['outcomePrices'])]
 
     async def record_tpsl_decision(
@@ -128,20 +128,17 @@ class TradingBot:
                 'tpsl_profit': profit,
                 'tpsl_open_position': position.value,
                 'tpsl_update_at': datetime.now().timestamp(),
+                'tpsl_decision': decision.value,
                 'volume':trade.volume
             }
         }
         
-        if decision:
-            document["$set"]['tpsl_decision'] = decision.value
-        
-        
-            # send to discord
-            event = await self.mongo_client.find_one(
-                settings.poly_events_collection_name,
-                {"hash_id": trade.hash_id}
-            )
-            if (decision.value not in ["HOLD"] or position.value not in ["OPEN"]) and trade.volume > 100_000 and send_discord:
+        # send to discord
+        event = await self.mongo_client.find_one(
+            settings.poly_events_collection_name,
+            {"hash_id": trade.hash_id}
+        )
+        if decision.value not in ["HOLD"] and trade.volume > 100_000 and send_discord:
                 sent_poly_win_loss_discord(
                     f"""- Hash ID: {trade.hash_id}
 - Prediction ID: {trade.prediction_id}
@@ -198,7 +195,7 @@ class TradingBot:
         elif profit <= 0 and abs(profit/max_profit) > self.config.STOP_LOSS_THRESHOLD:
             return Position.CLOSE, Decision.STOP_LOSS
         
-        return Position.OPEN, None
+        return Position.OPEN, Decision.HOLD
 
     async def process_trade(self, trade: TradeData) -> bool:
         """Process a single trade with TPSL logic."""
@@ -215,10 +212,10 @@ class TradingBot:
                                           send_discord=True)
             
             if position == Position.CLOSE:
-                logger.info(f"Position closed: {decision.value}")
+                # logger.info(f"Position closed: {decision.value}")
                 print(f"Position closed: {decision.value}")
             else:
-                logger.info("Position held")
+                # logger.info("Position held")
                 print("Position held")
                 
             await self.update_highest_profit(trade.prediction_id, 
