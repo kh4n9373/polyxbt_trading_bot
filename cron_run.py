@@ -11,6 +11,7 @@ def task():
     loop.close()
     # asyncio.run(run_cron_job())
 
+# task()
 schedule.every(15).minutes.do(task)
 
 while True:

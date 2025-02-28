@@ -12,6 +12,7 @@ from app.constants.database import (
     DISTILLED_TEST_DATABASE_NAME
 )
 from app.config import settings
+from app.utils.discord import sent_poly_win_loss_discord
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 class Position(str, Enum):
     OPEN = "OPEN"
     CLOSE = "CLOSE"
-    
+
 class Decision(str, Enum):
     TAKE_PROFIT = "TAKE PROFIT"
     STOP_LOSS = "STOP LOSS"
@@ -38,6 +39,7 @@ class TradingConfig:
 @dataclass
 class TradeData:
     prediction_id: str
+    prediction: str
     hash_id: str
     option_id: str
     entry_odds: List[float]
@@ -45,6 +47,7 @@ class TradeData:
     highest_profit: float
     volume: float
     created_at: int
+    option: str
     curr_odds: Optional[List[float]] = None
 
 class TradingBot:
@@ -77,7 +80,11 @@ class TradingBot:
             
         return profit
 
-    async def get_current_odds(self, hash_id: str, option_id: str) -> List[float]:
+    async def get_outcome_prices_text(self, entry_odds : list, prediction_idx: int):
+        outcome_prices_text = f"{entry_odds}, means having {round(entry_odds[prediction_idx]*100, 2)}% chance of winning ${(1-entry_odds[prediction_idx])/entry_odds[prediction_idx]} for every $1"
+        return outcome_prices_text
+    
+    async def get_current_odds(self,trade: TradeData, hash_id: str, option_id: str) -> List[float]:
         """Fetch current odds from the database."""
         event = await self.mongo_client.find_one(
             settings.poly_events_collection_name,
@@ -92,7 +99,7 @@ class TradingBot:
         )
         if not matching_opt:
             raise ValueError(f"Option not found for option_id: {option_id} for event {hash_id}")
-
+        trade.option = ""
         return [float(odd) for odd in json.loads(matching_opt['outcomePrices'])]
 
     async def record_tpsl_decision(
@@ -100,7 +107,8 @@ class TradingBot:
         trade: TradeData,
         profit: float,
         position: Position,
-        decision: Optional[Decision] = None
+        decision: Optional[Decision] = None,
+        send_discord: bool = False
     ) -> None:
         """Record TPSL decision in database."""
         filter = {
@@ -126,12 +134,32 @@ class TradingBot:
         
         if decision:
             document["$set"]['tpsl_decision'] = decision.value
-            
+        
+        
+            # send to discord
+            event = await self.mongo_client.find_one(
+                settings.poly_events_collection_name,
+                {"hash_id": trade.hash_id}
+            )
+            if (decision.value not in ["HOLD"] or position.value not in ["OPEN"]) and trade.volume > 100_000 and send_discord:
+                sent_poly_win_loss_discord(
+                    f"""- Hash ID: {trade.hash_id}
+- Prediction ID: {trade.prediction_id}
+- Title: {event['title']}
+- URL: {"https://polymarket.com/event/" + event['slug']}
+- Option: `{trade.option}`
+- Prediction: `{trade.prediction}`
+- Entry Timing: `{trade.created_at}`
+- Outcome Prices: `{await self.get_outcome_prices_text(trade.curr_odds,trade.prediction_idx)}`
+- Volume: `{trade.volume}`
+- Win/Loss: `{position.value}`
+- Profit: `${profit}`
+"""
+                )
         await self.mongo_client.update_one("tpsl_polyxbt",
                                                 filter=filter, 
                                                 data=document, 
                                                 upsert=True)
-
     async def update_highest_profit(
         self,
         prediction_id: str,
@@ -175,7 +203,7 @@ class TradingBot:
     async def process_trade(self, trade: TradeData) -> bool:
         """Process a single trade with TPSL logic."""
         try:
-            trade.curr_odds = await self.get_current_odds(trade.hash_id, trade.option_id)
+            trade.curr_odds = await self.get_current_odds(trade,trade.hash_id, trade.option_id)
             position, decision = await self.evaluate_tpsl(trade)
             curr_profit = self.calculate_profit(trade.entry_odds, 
                                                               trade.curr_odds, 
@@ -183,7 +211,8 @@ class TradingBot:
             await self.record_tpsl_decision(trade, 
                                           curr_profit,
                                           position,
-                                          decision)
+                                          decision,
+                                          send_discord=True)
             
             if position == Position.CLOSE:
                 logger.info(f"Position closed: {decision.value}")
@@ -234,12 +263,14 @@ class TradingBot:
                     highest_profit = tpsl_record.get('highest_profit',0)
                     trade = TradeData(
                         prediction_id=prediction['prediction_id'],
+                        prediction = prediction['detailed_prediction']['prediction'],
                         hash_id=prediction['hash_id'],
                         option_id=prediction['detailed_prediction']['option_id'],
                         entry_odds=prediction['detailed_prediction']['odds'],
                         prediction_idx=prediction['detailed_prediction']['prediction_idx'],
                         volume=prediction["volume"],
                         created_at=prediction["created_at"],
+                        option="",
                         highest_profit=highest_profit
                     )
                     

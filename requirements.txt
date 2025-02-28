@@ -3,3 +3,4 @@ motor
 dotenv
 schedule
 python-crontab
+discord-webhook
