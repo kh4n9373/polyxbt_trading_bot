@@ -147,7 +147,7 @@ class TradingBot:
 - Option: `{trade.option}`
 - Prediction: `{trade.prediction}`
 - Entry Timing: `{trade.created_at}`
-- Outcome Prices: `{await self.get_outcome_prices_text(trade.curr_odds,trade.prediction_idx)}`
+- Outcome Prices: `{await self.get_outcome_prices_text(trade.entry_odds,trade.prediction_idx)}`
 - Volume: `{trade.volume}`
 - Win/Loss: `{decision.value}`
 - Profit: `${profit}`
